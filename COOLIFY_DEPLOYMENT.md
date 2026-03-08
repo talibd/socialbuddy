@@ -63,7 +63,7 @@ Add the following environment variables to your Application in Coolify. *Do not 
 
 | Variable | Description |
 | :--- | :--- |
-| `DATABASE_URL` | The Connection String from Step 1 (e.g., `postgresql://...`). |
+| `DATABASE_URL` | The Connection String from Step 1 (e.g., `postgresql://...`). **IMPORTANT:** Append `&sslmode=disable` (or `?sslmode=disable` if there is no existing `?` in the URL) to the end of your connection string. |
 | `TELEGRAM_BOT_TOKEN` | Your Telegram bot token from BotFather. |
 | `GEMINI_API_KEY` | Your Google Gemini API key. |
 | `MINIO_ENDPOINT` | The URL for your MinIO instance (e.g., `http://<minio-internal-ip>:9000`). |
