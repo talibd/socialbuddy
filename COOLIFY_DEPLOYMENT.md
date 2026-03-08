@@ -43,15 +43,17 @@ SocialBuddy uses MinIO (S3-compatible storage) to store media attachments from T
 
 ## Step 3: Deploy the SocialBuddy Application
 
-Now we will deploy the Node.js application using the provided `Dockerfile`.
+Now we will deploy the Node.js application. 
+
+> **CRITICAL:** Your deployment might fail if Coolify uses its default build system (Nixpacks) because it may choose an incompatible Node.js version. You **must** ensure the Build Pack is set to **Dockerfile**.
 
 1. In your Coolify Project/Environment, click **+ New Resource**.
 2. Select **Application**.
 3. Choose your source (e.g., **GitHub** or **GitLab**).
 4. Select your `socialbuddy` repository and the branch you want to deploy (e.g., `main`).
-5. Coolify will scan the repo. When asked for the **Build Pack**, select **Nixpacks** or **Dockerfile**. Since we have a custom `Dockerfile` optimized for this app, select **Dockerfile**.
-6. Set the **Port** to `3000` (this is the Express server port for OAuth callbacks).
-7. Do **not** deploy yet. Go to the **Environment Variables** tab.
+5. **CRITICAL:** Under **Configuration -> General**, find **Build Pack** and change it from `Nixpacks` to `Dockerfile`.
+6. Set the **Port** to `3000`.
+7. Go to the **Environment Variables** tab.
 
 ---
 
