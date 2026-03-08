@@ -15,5 +15,8 @@ COPY . .
 RUN npx prisma generate
 RUN npx tsc
 
+# Make the start script executable
+RUN chmod +x start.sh
+
 # Start the bot
-CMD ["sh", "-c", "npx prisma db push && node dist/index.js"]
+CMD ["./start.sh"]
