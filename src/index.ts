@@ -244,7 +244,7 @@ bot.on('message', async (ctx) => {
       tools: [{ functionDeclarations: [schedulePostDeclaration, getPostingStatsDeclaration, getRecentPostsDeclaration, getPostAnalyticsDeclaration] }],
       systemInstruction: `You are a social media manager bot. The user currently has these connected accounts: ${accountsList}.
 If the user wants to post something, map their requested '@' mentions to the connected accounts. Use the 'schedule_post' tool when they are ready to post. 
-CRITICAL TIMEZONE INSTRUCTION: The user is in Indian Standard Time (IST, UTC+5:30). Your current server time is ${new Date().toISOString()} (UTC). When the user asks to schedule a post at a specific time (e.g., "1:52 PM"), assume they mean IST. You MUST convert their requested IST time to the correct UTC ISO 8601 timestamp for the 'scheduledAt' parameter.
+CRITICAL TIMEZONE INSTRUCTION: The user is in Indian Standard Time (IST, UTC+5:30). Your current server time is ${new Date().toISOString()} (UTC). When the user asks to schedule a post at a specific time (e.g., "1:52 PM"), assume they mean IST. You MUST convert their requested IST time to the correct UTC ISO 8601 timestamp for the 'scheduledAt' parameter (e.g if they ask for 2 PM IST today, calculate the equivalent UTC time and output it).
 If the user asks for reports or stats (like "how many posts"), use the 'get_posting_stats' tool.
 If the user asks about specific posts (like "what is pending?" or "did it post?"), use the 'get_recent_posts' tool to find out, then summarize the results for them naturally.
 If the user asks for likes or analytics, use the 'get_post_analytics' tool.
@@ -263,47 +263,77 @@ If the user attached an image or video, they will pass it as [Attached Media: UR
     const result = await chat.sendMessage(prompt);
     let response = result.response;
     
-    // Save the updated chat history
-    userHistories.set(telegramId, await chat.getHistory());
-
     let functionCalls = response.functionCalls();
     
-    if (functionCalls && functionCalls.length > 0) {
+    // We need to keep feeding function responses back to the model 
+    // until it actually produces text.
+    while (functionCalls && functionCalls.length > 0) {
       const call = functionCalls[0];
+      let functionResponseData: any = null;
       
       if (call && call.name === 'schedule_post') {
         const { content, handles, scheduledAt, mediaUrls } = call.args as any;
         
-        const scheduleDate = scheduledAt === 'now' ? new Date() : new Date(scheduledAt);
+        let scheduleDate: Date;
+        if (scheduledAt === 'now') {
+          scheduleDate = new Date();
+        } else {
+          // Force the model's output to be interpreted as IST if it isn't already explicit
+          // The model often spits out "2026-03-09T13:50:00" without the timezone offset.
+          // By appending +05:30 if it's missing, we force JavaScript to parse it as IST.
+          let dateStr = scheduledAt;
+          if (dateStr && !dateStr.includes('Z') && !dateStr.includes('+') && !dateStr.includes('-')) {
+             dateStr += '+05:30';
+          }
+          scheduleDate = new Date(dateStr);
+        }
+
         const now = new Date();
 
         // Validation: Check if the scheduled time is in the past (by more than 5 minutes to account for AI processing delays)
-        if (scheduledAt !== 'now' && (now.getTime() - scheduleDate.getTime() > 5 * 60 * 1000)) {
+        // Also check if scheduleDate is Invalid
+        if (isNaN(scheduleDate.getTime())) {
+           functionResponseData = { error: "You provided an invalid date format. Please use ISO 8601." };
+           await ctx.reply(`❌ I couldn't schedule the post. I misunderstood the date format. Please try again.`);
+        } else if (scheduledAt !== 'now' && (now.getTime() - scheduleDate.getTime() > 5 * 60 * 1000)) {
            const formattedPastTime = scheduleDate.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'short', timeStyle: 'short' });
+           functionResponseData = { error: `The time requested (${formattedPastTime} IST) has already passed.` };
            await ctx.reply(`❌ I couldn't schedule the post. The time you requested (${formattedPastTime} IST) has already passed. Please specify a future time.`);
-           return;
+        } else {
+           // Find invalid handles before saving
+           const invalidHandles = [];
+           for (const handle of handles) {
+              const cleanTargetHandle = handle.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+              const account = user.accounts.find(acc => 
+                acc.handle.replace(/[^a-zA-Z0-9]/g, '').toLowerCase() === cleanTargetHandle
+              );
+              if (!account) invalidHandles.push(handle);
+           }
+
+           if (invalidHandles.length > 0) {
+              functionResponseData = { error: `The following accounts are not connected: ${invalidHandles.join(', ')}` };
+              await ctx.reply(`❌ Cannot schedule post. You have not connected these accounts: ${invalidHandles.join(', ')}. Please use /accounts to see your exact connected handles.`);
+           } else {
+             // Save the post request to the database
+             await prisma.post.create({
+               data: {
+                 userId: user.id,
+                 content: content,
+                 platforms: handles,
+                 mediaUrls: mediaUrls || [],
+                 scheduledAt: scheduleDate,
+                 status: "pending"
+               }
+             });
+
+             const timeString = scheduledAt === 'now' ? 'Immediately' : scheduleDate.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'short', timeStyle: 'short' }) + ' (IST)';
+             functionResponseData = { success: true, scheduledTimeIST: timeString };
+             
+             let replyMsg = `✅ Got it! I have scheduled your post.\n\n📝 Content: "${content}"\n📲 Accounts: ${handles.join(', ')}\n⏰ Time: ${timeString}`;
+             if (mediaUrls && mediaUrls.length > 0) replyMsg += `\n🖼️ Media: 1 file attached.`;
+             await ctx.reply(replyMsg);
+           }
         }
-
-        // Save the post request to the database
-        await prisma.post.create({
-          data: {
-            userId: user.id,
-            content: content,
-            platforms: handles,
-            mediaUrls: mediaUrls || [],
-            scheduledAt: scheduleDate,
-            status: "pending"
-          }
-        });
-
-        const timeString = scheduledAt === 'now' ? 'Immediately' : scheduleDate.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'short', timeStyle: 'short' }) + ' (IST)';
-        let replyMsg = `✅ Got it! I have scheduled your post.\n\n📝 Content: "${content}"\n📲 Accounts: ${handles.join(', ')}\n⏰ Time: ${timeString}`;
-        
-        if (mediaUrls && mediaUrls.length > 0) {
-           replyMsg += `\n🖼️ Media: 1 file attached.`;
-        }
-
-        await ctx.reply(replyMsg);
       } else if (call && call.name === 'get_posting_stats') {
         const { handle } = call.args as any;
         
@@ -316,12 +346,7 @@ If the user attached an image or video, they will pass it as [Attached Media: UR
         const published = await prisma.post.count({ where: { ...whereClause, status: "published" } });
         const failed = await prisma.post.count({ where: { ...whereClause, status: "failed" } });
 
-        let reportMsg = `📊 *Posting Report${handle ? ` for ${handle}` : ''}*\n\n`;
-        reportMsg += `✅ Published: ${published}\n`;
-        reportMsg += `⏳ Pending: ${pending}\n`;
-        reportMsg += `❌ Failed: ${failed}`;
-
-        await ctx.replyWithMarkdown(reportMsg);
+        functionResponseData = { pending, published, failed, handle: handle || 'all' };
 
       } else if (call && call.name === 'get_recent_posts') {
         const { status, limit } = call.args as any;
@@ -337,7 +362,6 @@ If the user attached an image or video, they will pass it as [Attached Media: UR
           take: limit || 5
         });
         
-        // Format the posts as JSON string to feed back into the AI
         const postsData = posts.map(p => ({
            content: p.content,
            status: p.status,
@@ -345,35 +369,28 @@ If the user attached an image or video, they will pass it as [Attached Media: UR
            accounts: p.platforms
         }));
 
-        // Send the function result back to the AI so it can form a natural reply
-        const secondResult = await chat.sendMessage([{
-          functionResponse: {
-            name: 'get_recent_posts',
-            response: { posts: postsData }
-          }
-        }]);
-        
-        // Save the updated chat history again
-        userHistories.set(telegramId, await chat.getHistory());
-
-        const textResponse = secondResult.response.text();
-        if (textResponse) {
-           await ctx.reply(textResponse);
-        }
+        functionResponseData = { posts: postsData };
 
       } else if (call && call.name === 'get_post_analytics') {
         const { handle } = call.args as any;
-        
-        // Mock data since APIs are not connected
-        let analyticsMsg = `📈 *Analytics${handle ? ` for ${handle}` : ''}*\n\n`;
-        analyticsMsg += `_(Note: Social Media APIs are not connected yet, so this is mock data.)_\n\n`;
-        analyticsMsg += `❤️ Total Likes: ${Math.floor(Math.random() * 500) + 12}\n`;
-        analyticsMsg += `💬 Comments: ${Math.floor(Math.random() * 50) + 2}\n`;
-        analyticsMsg += `🔁 Shares: ${Math.floor(Math.random() * 100) + 5}`;
-
-        await ctx.replyWithMarkdown(analyticsMsg);
+        functionResponseData = { likes: Math.floor(Math.random() * 500) + 12, comments: Math.floor(Math.random() * 50) + 2, shares: Math.floor(Math.random() * 100) + 5, mock: true };
       }
-    } else {
+
+      // Send the function response back to the model
+      const secondResult = await chat.sendMessage([{
+        functionResponse: {
+          name: call.name,
+          response: functionResponseData || { status: "ok" }
+        }
+      }]);
+      response = secondResult.response;
+      functionCalls = response.functionCalls();
+    } // End of while loop
+
+    // Save the finalized chat history
+    userHistories.set(telegramId, await chat.getHistory());
+
+    if (!response.functionCalls() || response.functionCalls()?.length === 0) {
       // Gemini just wants to reply with normal text
       const textResponse = response.text();
       if (textResponse) {

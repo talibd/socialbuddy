@@ -145,14 +145,17 @@ export function startScheduler(bot: Telegraf) {
         const successPlatforms: string[] = [];
 
         for (const handle of post.platforms) {
-          const cleanTargetHandle = handle.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
-          // Look up the specific connected account to get its OAuth token (case-insensitive, ignoring '@' and spaces)
+          // Remove "@" and lower case to match handles robustly.
+          const cleanTargetHandle = handle.replace(/^@/, '').toLowerCase();
+          
+          // The database handles are stored as e.g. "@Socialbuddies"
+          // We must clean those similarly to match.
           const account = post.user.accounts.find(acc => 
-            acc.handle.replace(/[^a-zA-Z0-9]/g, '').toLowerCase() === cleanTargetHandle
+            acc.handle.replace(/^@/, '').toLowerCase() === cleanTargetHandle
           );
           
           if (!account) {
-            console.error(`[Scheduler] Account not found for handle: ${handle} (Target clean: ${cleanTargetHandle})`);
+            console.error(`[Scheduler] Account not found for Target: ${handle} (Cleaned Target: ${cleanTargetHandle})`);
             allPlatformsSucceeded = false;
             failedPlatforms.push(handle);
             continue;
