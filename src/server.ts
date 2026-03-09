@@ -123,7 +123,7 @@ app.get('/auth/callback', async (req, res) => {
        }
     }
 
-    if (platform === 'instagram') {
+    if (platform === 'instagram' || platform === 'facebook') {
       const facebookAppId = process.env.FACEBOOK_APP_ID;
       const facebookAppSecret = process.env.FACEBOOK_APP_SECRET;
       const redirectUri = `${process.env.BASE_URL}/auth/callback`;
@@ -166,42 +166,10 @@ app.get('/auth/callback', async (req, res) => {
       
       if (!pages || pages.length === 0) {
         console.error('[OAuth Callback] No Facebook Pages found.');
-        return res.status(400).send("No Facebook Pages found for this account. You need a Facebook Page linked to your Instagram Business Account.");
+        return res.status(400).send("No Facebook Pages found for this account. You need a Facebook Page.");
       }
 
-      // 4. Find the Instagram Business Account linked to those pages
-      let instagramAccountId = null;
-      let instagramUsername = null;
-
-      for (const page of pages) {
-        try {
-           const igResponse = await axios.get(`https://graph.facebook.com/v19.0/${page.id}?fields=instagram_business_account`, {
-             params: { access_token: longLivedToken }
-           });
-           
-           if (igResponse.data.instagram_business_account) {
-             instagramAccountId = igResponse.data.instagram_business_account.id;
-             console.log(`[OAuth Callback] Found IG Account ID: ${instagramAccountId} on page ${page.id}`);
-             
-             // Get the exact handle
-             const igUserResponse = await axios.get(`https://graph.facebook.com/v19.0/${instagramAccountId}?fields=username`, {
-                params: { access_token: longLivedToken }
-             });
-             instagramUsername = igUserResponse.data.username;
-             console.log(`[OAuth Callback] Found IG Username: ${instagramUsername}`);
-             break;
-           }
-        } catch (e: any) {
-           console.error(`Error checking page ${page.id} for IG account:`, e?.response?.data || e.message);
-        }
-      }
-
-      if (!instagramAccountId) {
-         console.error('[OAuth Callback] Could not find an Instagram Professional/Business account linked to the pages.');
-         return res.status(400).send("We couldn't find an Instagram Professional/Business account linked to your Facebook pages. Please ensure your IG account is changed to a Professional account and linked to a Facebook Page you admin.");
-      }
-
-      // 5. Save everything to Database
+      // 4. Save everything to Database
       const user = await prisma.user.findUnique({
         where: { telegramId: telegramUserId }
       });
@@ -210,36 +178,107 @@ app.get('/auth/callback', async (req, res) => {
         return res.status(404).send('User not found. Please send /start in Telegram first.');
       }
 
-      const exactHandle = `@${instagramUsername}`;
+      if (platform === 'instagram') {
+        // 4a. Find the Instagram Business Account linked to those pages
+        let instagramAccountId = null;
+        let instagramUsername = null;
 
-      await prisma.socialAccount.upsert({
-        where: {
-          userId_platform_handle: {
+        for (const page of pages) {
+          try {
+             const igResponse = await axios.get(`https://graph.facebook.com/v19.0/${page.id}?fields=instagram_business_account`, {
+               params: { access_token: longLivedToken }
+             });
+             
+             if (igResponse.data.instagram_business_account) {
+               instagramAccountId = igResponse.data.instagram_business_account.id;
+               console.log(`[OAuth Callback] Found IG Account ID: ${instagramAccountId} on page ${page.id}`);
+               
+               // Get the exact handle
+               const igUserResponse = await axios.get(`https://graph.facebook.com/v19.0/${instagramAccountId}?fields=username`, {
+                  params: { access_token: longLivedToken }
+               });
+               instagramUsername = igUserResponse.data.username;
+               console.log(`[OAuth Callback] Found IG Username: ${instagramUsername}`);
+               break;
+             }
+          } catch (e: any) {
+             console.error(`Error checking page ${page.id} for IG account:`, e?.response?.data || e.message);
+          }
+        }
+
+        if (!instagramAccountId) {
+           console.error('[OAuth Callback] Could not find an Instagram Professional/Business account linked to the pages.');
+           return res.status(400).send("We couldn't find an Instagram Professional/Business account linked to your Facebook pages. Please ensure your IG account is changed to a Professional account and linked to a Facebook Page you admin.");
+        }
+
+        const exactHandle = `@${instagramUsername}`;
+
+        await prisma.socialAccount.upsert({
+          where: {
+            userId_platform_handle: {
+              userId: user.id,
+              platform: 'instagram',
+              handle: exactHandle
+            }
+          },
+          update: {
+            token: longLivedToken // Ideally encrypted!
+          },
+          create: {
             userId: user.id,
             platform: 'instagram',
-            handle: exactHandle
+            handle: exactHandle,
+            token: longLivedToken
           }
-        },
-        update: {
-          token: longLivedToken // Ideally encrypted!
-        },
-        create: {
-          userId: user.id,
-          platform: 'instagram',
-          handle: exactHandle,
-          token: longLivedToken
-        }
-      });
+        });
 
-      return res.send(`
-        <html>
-          <body style="font-family: sans-serif; text-align: center; margin-top: 50px;">
-            <h1 style="color: green;">✅ Success!</h1>
-            <p>Your <b>Instagram</b> account (<b>${exactHandle}</b>) has been connected to SocialBuddy.</p>
-            <p>You can close this window and return to Telegram.</p>
-          </body>
-        </html>
-      `);
+        return res.send(`
+          <html>
+            <body style="font-family: sans-serif; text-align: center; margin-top: 50px;">
+              <h1 style="color: green;">✅ Success!</h1>
+              <p>Your <b>Instagram</b> account (<b>${exactHandle}</b>) has been connected to SocialBuddy.</p>
+              <p>You can close this window and return to Telegram.</p>
+            </body>
+          </html>
+        `);
+      } else if (platform === 'facebook') {
+        // 4b. Save all Facebook Pages
+        const savedPages = [];
+        for (const page of pages) {
+          const pageHandle = page.name;
+          const pageToken = page.access_token; // Use the Page Access Token for posting
+          
+          await prisma.socialAccount.upsert({
+            where: {
+              userId_platform_handle: {
+                userId: user.id,
+                platform: 'facebook',
+                handle: pageHandle
+              }
+            },
+            update: {
+              token: pageToken
+            },
+            create: {
+              userId: user.id,
+              platform: 'facebook',
+              handle: pageHandle,
+              token: pageToken
+            }
+          });
+          savedPages.push(pageHandle);
+        }
+
+        return res.send(`
+          <html>
+            <body style="font-family: sans-serif; text-align: center; margin-top: 50px;">
+              <h1 style="color: green;">✅ Success!</h1>
+              <p>Your <b>Facebook Pages</b> (${savedPages.join(', ')}) have been connected to SocialBuddy.</p>
+              <p>You can close this window and return to Telegram.</p>
+            </body>
+          </html>
+        `);
+      }
     } else {
        // --- MOCK FALLBACK for other platforms ---
        const mockPlatform = (req.query.platform as string) || "mock";
@@ -305,16 +344,20 @@ app.get('/auth/:platform', (req, res) => {
   
   const mockProviderLoginUrl = `${req.protocol}://${req.get('host')}/auth/mock-provider-login?platform=${platform}&userId=${userId}&state=${state}`;
 
-  if (platform === 'instagram') {
+  if (platform === 'instagram' || platform === 'facebook') {
     const facebookAppId = process.env.FACEBOOK_APP_ID;
     if (!facebookAppId) {
       return res.status(500).send('Server is missing FACEBOOK_APP_ID.');
     }
     const redirectUri = `${process.env.BASE_URL}/auth/callback`;
-    const scopes = 'instagram_basic,instagram_content_publish,pages_show_list,pages_read_engagement';
+    
+    // Different scopes depending on if we're doing IG or FB Pages
+    const scopes = platform === 'instagram' 
+      ? 'instagram_basic,instagram_content_publish,pages_show_list,pages_read_engagement'
+      : 'pages_show_list,pages_read_engagement,pages_manage_posts';
     
     // Facebook OAuth Login URL
-    const facebookAuthUrl = `https://www.facebook.com/v19.0/dialog/oauth?client_id=${facebookAppId}&redirect_uri=${redirectUri}&state=${state}_${userId}_instagram&scope=${scopes}`;
+    const facebookAuthUrl = `https://www.facebook.com/v19.0/dialog/oauth?client_id=${facebookAppId}&redirect_uri=${redirectUri}&state=${state}_${userId}_${platform}&scope=${scopes}`;
     return res.redirect(facebookAuthUrl);
   }
 
