@@ -61,6 +61,24 @@ const getPostingStatsDeclaration: FunctionDeclaration = {
   },
 };
 
+const getRecentPostsDeclaration: FunctionDeclaration = {
+  name: "get_recent_posts",
+  description: "Gets the user's recent posts (including content, status, and time) so you can tell them specifically what is pending or published.",
+  parameters: {
+    type: SchemaType.OBJECT,
+    properties: {
+      status: {
+        type: SchemaType.STRING,
+        description: "Optional. Filter by status: 'pending', 'published', or 'failed'.",
+      },
+      limit: {
+        type: SchemaType.NUMBER,
+        description: "Optional. Number of posts to retrieve (default 5).",
+      }
+    },
+  },
+};
+
 const getPostAnalyticsDeclaration: FunctionDeclaration = {
   name: "get_post_analytics",
   description: "Fetches engagement metrics (likes, comments, etc.) for a specific account.",
@@ -219,10 +237,11 @@ bot.on('message', async (ctx) => {
     // Initialize Gemini model with the Tool
     const model = genAI.getGenerativeModel({ 
       model: "gemini-2.5-flash",
-      tools: [{ functionDeclarations: [schedulePostDeclaration, getPostingStatsDeclaration, getPostAnalyticsDeclaration] }],
+      tools: [{ functionDeclarations: [schedulePostDeclaration, getPostingStatsDeclaration, getRecentPostsDeclaration, getPostAnalyticsDeclaration] }],
       systemInstruction: `You are a social media manager bot. The user currently has these connected accounts: ${accountsList}.
-If the user wants to post something, map their requested '@' mentions to the connected accounts. Use the 'schedule_post' tool when they are ready to post. Your current time is ${new Date().toISOString()}.
+If the user wants to post something, map their requested '@' mentions to the connected accounts. Use the 'schedule_post' tool when they are ready to post. Your current server time is ${new Date().toISOString()}.
 If the user asks for reports or stats (like "how many posts"), use the 'get_posting_stats' tool.
+If the user asks about specific posts (like "what is pending?" or "did it post?"), use the 'get_recent_posts' tool to find out, then summarize the results for them naturally.
 If the user asks for likes or analytics, use the 'get_post_analytics' tool.
 If the user attached an image or video, they will pass it as [Attached Media: URL]. Always include this exact URL in the mediaUrls parameter.`
     });
@@ -237,12 +256,12 @@ If the user attached an image or video, they will pass it as [Attached Media: UR
     }
 
     const result = await chat.sendMessage(prompt);
-    const response = result.response;
+    let response = result.response;
     
     // Save the updated chat history
     userHistories.set(telegramId, await chat.getHistory());
 
-    const functionCalls = response.functionCalls();
+    let functionCalls = response.functionCalls();
     
     if (functionCalls && functionCalls.length > 0) {
       const call = functionCalls[0];
@@ -275,8 +294,6 @@ If the user attached an image or video, they will pass it as [Attached Media: UR
       } else if (call && call.name === 'get_posting_stats') {
         const { handle } = call.args as any;
         
-        // Prisma can't directly query "array contains element" easily in some versions without raw queries,
-        // but for string arrays, Prisma supports 'has'. 
         let whereClause: any = { userId: user.id };
         if (handle) {
           whereClause.platforms = { has: handle };
@@ -292,6 +309,44 @@ If the user attached an image or video, they will pass it as [Attached Media: UR
         reportMsg += `❌ Failed: ${failed}`;
 
         await ctx.replyWithMarkdown(reportMsg);
+
+      } else if (call && call.name === 'get_recent_posts') {
+        const { status, limit } = call.args as any;
+        
+        let whereClause: any = { userId: user.id };
+        if (status) {
+          whereClause.status = status;
+        }
+
+        const posts = await prisma.post.findMany({
+          where: whereClause,
+          orderBy: { createdAt: 'desc' },
+          take: limit || 5
+        });
+        
+        // Format the posts as JSON string to feed back into the AI
+        const postsData = posts.map(p => ({
+           content: p.content,
+           status: p.status,
+           scheduledFor: p.scheduledAt?.toISOString(),
+           accounts: p.platforms
+        }));
+
+        // Send the function result back to the AI so it can form a natural reply
+        const secondResult = await chat.sendMessage([{
+          functionResponse: {
+            name: 'get_recent_posts',
+            response: { posts: postsData }
+          }
+        }]);
+        
+        // Save the updated chat history again
+        userHistories.set(telegramId, await chat.getHistory());
+
+        const textResponse = secondResult.response.text();
+        if (textResponse) {
+           await ctx.reply(textResponse);
+        }
 
       } else if (call && call.name === 'get_post_analytics') {
         const { handle } = call.args as any;
