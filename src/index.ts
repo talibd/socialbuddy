@@ -138,6 +138,9 @@ bot.command('accounts', async (ctx) => {
   ctx.reply(`Your connected accounts:\n\n${accountsList}`);
 });
 
+// Store chat histories per user so the bot remembers context across messages
+const userHistories = new Map<string, any[]>();
+
 bot.on('message', async (ctx) => {
   let userMessage = "";
   let mediaUrl = "";
@@ -224,7 +227,8 @@ If the user asks for likes or analytics, use the 'get_post_analytics' tool.
 If the user attached an image or video, they will pass it as [Attached Media: URL]. Always include this exact URL in the mediaUrls parameter.`
     });
 
-    const chat = model.startChat();
+    const history = userHistories.get(telegramId) || [];
+    const chat = model.startChat({ history });
     
     // Construct the prompt with the media link if available
     let prompt = userMessage || "Here is a media file I want to post.";
@@ -234,6 +238,9 @@ If the user attached an image or video, they will pass it as [Attached Media: UR
 
     const result = await chat.sendMessage(prompt);
     const response = result.response;
+    
+    // Save the updated chat history
+    userHistories.set(telegramId, await chat.getHistory());
 
     const functionCalls = response.functionCalls();
     
