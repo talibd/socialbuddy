@@ -5,6 +5,8 @@ import { Pool } from 'pg';
 import { PrismaPg } from '@prisma/adapter-pg';
 import crypto from 'crypto';
 import axios from 'axios';
+import { startScheduler } from './scheduler.js';
+import { pathToFileURL } from 'url';
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const adapter = new PrismaPg(pool);
@@ -365,8 +367,21 @@ app.get('/auth/:platform', (req, res) => {
   res.redirect(mockProviderLoginUrl);
 });
 
-export function startServer(port: number = parseInt(process.env.PORT || '3000')) {
+export function startServer(
+  port: number = parseInt(process.env.PORT || '3000'),
+  options: { startBackgroundScheduler?: boolean } = {}
+) {
+  const { startBackgroundScheduler = true } = options;
+
   app.listen(port, '0.0.0.0', () => {
     console.log(`🌐 OAuth Server running on http://localhost:${port}`);
+    if (startBackgroundScheduler) {
+      startScheduler();
+      console.log('🗓️ Scheduler started in server-only mode (Telegram notifications disabled).');
+    }
   });
+}
+
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+  startServer();
 }

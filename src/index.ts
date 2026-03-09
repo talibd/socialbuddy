@@ -404,7 +404,7 @@ If the user attached an image or video, they will pass it as [Attached Media: UR
   }
 });
 
-startServer();
+startServer(undefined, { startBackgroundScheduler: false });
 
 bot.launch().then(() => {
   console.log('🤖 SocialBuddy Bot is running with Gemini Brain!');
