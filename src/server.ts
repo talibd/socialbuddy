@@ -22,6 +22,56 @@ app.get('/', (req, res) => {
   res.send('SocialBuddy OAuth Server is running!');
 });
 
+app.get('/privacy', (req, res) => {
+  res.send(`
+    <html>
+      <head>
+        <title>Privacy Policy - SocialBuddy</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+      </head>
+      <body style="font-family: sans-serif; line-height: 1.6; max-width: 800px; margin: 0 auto; padding: 20px;">
+        <h1>Privacy Policy</h1>
+        <p><strong>Last updated:</strong> ${new Date().toLocaleDateString()}</p>
+        <p>SocialBuddy ("we", "our", or "us") is committed to protecting your privacy. This Privacy Policy explains how your personal information is collected, used, and disclosed by SocialBuddy.</p>
+        
+        <h2>1. Information We Collect</h2>
+        <p>We collect information you provide directly to us when you use our service, such as when you connect your social media accounts (e.g., Facebook, Instagram, Telegram). This includes authentication tokens and basic profile information.</p>
+        
+        <h2>2. How We Use Your Information</h2>
+        <p>We use the information we collect to operate, maintain, and provide the features and functionality of the service. We only request the permissions strictly necessary to post content on your behalf via our Telegram bot.</p>
+        
+        <h2>3. Data Deletion</h2>
+        <p>If you wish to delete your data or disconnect your social accounts, you can do so through the SocialBuddy Telegram bot or by contacting support. Once disconnected, we remove your access tokens from our system.</p>
+        
+        <h2>4. Contact Us</h2>
+        <p>If you have any questions about this Privacy Policy, please contact the developer.</p>
+      </body>
+    </html>
+  `);
+});
+
+app.get('/terms', (req, res) => {
+  res.send(`
+    <html>
+      <head>
+        <title>Terms of Service - SocialBuddy</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+      </head>
+      <body style="font-family: sans-serif; line-height: 1.6; max-width: 800px; margin: 0 auto; padding: 20px;">
+        <h1>Terms of Service</h1>
+        <p><strong>Last updated:</strong> ${new Date().toLocaleDateString()}</p>
+        <p>Please read these terms of service carefully before using SocialBuddy.</p>
+        
+        <h2>1. Conditions of Use</h2>
+        <p>By using this service, you certify that you have read and reviewed this Agreement and that you agree to comply with its terms. If you do not want to be bound by the terms of this Agreement, you are advised to stop using the service accordingly.</p>
+        
+        <h2>2. Service Usage</h2>
+        <p>SocialBuddy provides a service to automate and manage social media posts. You agree to use this service in compliance with the rules and policies of the respective social media platforms (e.g., Meta, Telegram).</p>
+      </body>
+    </html>
+  `);
+});
+
 // Mock "Do you want to authorize this app?" screen
 app.get('/auth/mock-provider-login', (req, res) => {
   const { platform, userId, state } = req.query;
