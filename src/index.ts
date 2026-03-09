@@ -239,7 +239,8 @@ bot.on('message', async (ctx) => {
       model: "gemini-2.5-flash",
       tools: [{ functionDeclarations: [schedulePostDeclaration, getPostingStatsDeclaration, getRecentPostsDeclaration, getPostAnalyticsDeclaration] }],
       systemInstruction: `You are a social media manager bot. The user currently has these connected accounts: ${accountsList}.
-If the user wants to post something, map their requested '@' mentions to the connected accounts. Use the 'schedule_post' tool when they are ready to post. Your current server time is ${new Date().toISOString()}.
+If the user wants to post something, map their requested '@' mentions to the connected accounts. Use the 'schedule_post' tool when they are ready to post. 
+CRITICAL TIMEZONE INSTRUCTION: The user is in Indian Standard Time (IST, UTC+5:30). Your current server time is ${new Date().toISOString()} (UTC). When the user asks to schedule a post at a specific time (e.g., "1:52 PM"), assume they mean IST. You MUST convert their requested IST time to the correct UTC ISO 8601 timestamp for the 'scheduledAt' parameter.
 If the user asks for reports or stats (like "how many posts"), use the 'get_posting_stats' tool.
 If the user asks about specific posts (like "what is pending?" or "did it post?"), use the 'get_recent_posts' tool to find out, then summarize the results for them naturally.
 If the user asks for likes or analytics, use the 'get_post_analytics' tool.
