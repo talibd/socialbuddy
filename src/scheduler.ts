@@ -110,7 +110,7 @@ async function publishToPlatform(platform: string, handle: string, content: stri
   }
 }
 
-export function startScheduler(bot: Telegraf) {
+export function startScheduler(bot?: Telegraf) {
   console.log('⏰ Background Scheduler started. Checking for posts every minute...');
 
   // Run this function every single minute ('* * * * *')
@@ -187,22 +187,24 @@ export function startScheduler(bot: Telegraf) {
         
         console.log(`[Scheduler] Post ${post.id} updated to status: ${finalStatus}`);
 
-        // Notify the user via Telegram
-        try {
-          let notifyMsg = `🔔 Post Update\n\n`;
-          if (finalStatus === 'published') {
-            notifyMsg += `✅ Your scheduled post has been published successfully to: ${successPlatforms.join(', ')}\n\n`;
-          } else {
-            notifyMsg += `⚠️ There was an issue publishing your scheduled post.\n\n`;
-            if (successPlatforms.length > 0) notifyMsg += `✅ Succeeded: ${successPlatforms.join(', ')}\n`;
-            if (failedPlatforms.length > 0) notifyMsg += `❌ Failed: ${failedPlatforms.join(', ')}\n`;
-          }
-          notifyMsg += `📝 Content: "${post.content}"`;
+        // Notify the user via Telegram when a bot instance is available.
+        if (bot) {
+          try {
+            let notifyMsg = `🔔 Post Update\n\n`;
+            if (finalStatus === 'published') {
+              notifyMsg += `✅ Your scheduled post has been published successfully to: ${successPlatforms.join(', ')}\n\n`;
+            } else {
+              notifyMsg += `⚠️ There was an issue publishing your scheduled post.\n\n`;
+              if (successPlatforms.length > 0) notifyMsg += `✅ Succeeded: ${successPlatforms.join(', ')}\n`;
+              if (failedPlatforms.length > 0) notifyMsg += `❌ Failed: ${failedPlatforms.join(', ')}\n`;
+            }
+            notifyMsg += `📝 Content: "${post.content}"`;
 
-          // Using no parse_mode (plain text) to avoid crashes with user-provided characters like *, _, [, ]
-          await bot.telegram.sendMessage(post.user.telegramId, notifyMsg);
-        } catch (botErr) {
-          console.error(`[Scheduler] Failed to notify user ${post.user.telegramId}:`, botErr);
+            // Using no parse_mode (plain text) to avoid crashes with user-provided characters like *, _, [, ]
+            await bot.telegram.sendMessage(post.user.telegramId, notifyMsg);
+          } catch (botErr) {
+            console.error(`[Scheduler] Failed to notify user ${post.user.telegramId}:`, botErr);
+          }
         }
       }
     } catch (error) {
