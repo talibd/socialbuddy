@@ -56,6 +56,23 @@ const getPostingStatsDeclaration = {
         },
     },
 };
+const getRecentPostsDeclaration = {
+    name: "get_recent_posts",
+    description: "Gets the user's recent posts (including content, status, and time) so you can tell them specifically what is pending or published.",
+    parameters: {
+        type: SchemaType.OBJECT,
+        properties: {
+            status: {
+                type: SchemaType.STRING,
+                description: "Optional. Filter by status: 'pending', 'published', or 'failed'.",
+            },
+            limit: {
+                type: SchemaType.NUMBER,
+                description: "Optional. Number of posts to retrieve (default 5).",
+            }
+        },
+    },
+};
 const getPostAnalyticsDeclaration = {
     name: "get_post_analytics",
     description: "Fetches engagement metrics (likes, comments, etc.) for a specific account.",
@@ -114,6 +131,8 @@ bot.command('accounts', async (ctx) => {
     const accountsList = user.accounts.map(acc => `${acc.platform}: ${acc.handle}`).join('\n');
     ctx.reply(`Your connected accounts:\n\n${accountsList}`);
 });
+// Store chat histories per user so the bot remembers context across messages
+const userHistories = new Map();
 bot.on('message', async (ctx) => {
     let userMessage = "";
     let mediaUrl = "";
@@ -153,15 +172,20 @@ bot.on('message', async (ctx) => {
             const buffer = Buffer.from(response.data);
             const contentType = response.headers['content-type'] || 'application/octet-stream';
             let ext = '.bin';
-            if (contentType.includes('jpeg') || contentType.includes('jpg'))
+            const urlLower = tempMediaUrl.toLowerCase();
+            if (contentType.includes('jpeg') || contentType.includes('jpg') || urlLower.endsWith('.jpg') || urlLower.endsWith('.jpeg'))
                 ext = '.jpg';
-            else if (contentType.includes('png'))
+            else if (contentType.includes('png') || urlLower.endsWith('.png'))
                 ext = '.png';
-            else if (contentType.includes('mp4'))
+            else if (contentType.includes('mp4') || urlLower.endsWith('.mp4'))
                 ext = '.mp4';
-            else if (contentType.includes('gif'))
+            else if (contentType.includes('gif') || urlLower.endsWith('.gif'))
                 ext = '.gif';
-            mediaUrl = await uploadBufferToMinio(buffer, contentType, ext);
+            else if (msg.photo)
+                ext = '.jpg'; // Telegram photos are always jpegs
+            else if (msg.video)
+                ext = '.mp4'; // Telegram videos are typically mp4
+            mediaUrl = await uploadBufferToMinio(buffer, contentType === 'application/octet-stream' ? (ext === '.jpg' ? 'image/jpeg' : (ext === '.mp4' ? 'video/mp4' : contentType)) : contentType, ext);
         }
         catch (e) {
             console.error("Failed to upload to Minio", e);
@@ -187,49 +211,95 @@ bot.on('message', async (ctx) => {
         // Initialize Gemini model with the Tool
         const model = genAI.getGenerativeModel({
             model: "gemini-2.5-flash",
-            tools: [{ functionDeclarations: [schedulePostDeclaration, getPostingStatsDeclaration, getPostAnalyticsDeclaration] }],
+            tools: [{ functionDeclarations: [schedulePostDeclaration, getPostingStatsDeclaration, getRecentPostsDeclaration, getPostAnalyticsDeclaration] }],
             systemInstruction: `You are a social media manager bot. The user currently has these connected accounts: ${accountsList}.
-If the user wants to post something, map their requested '@' mentions to the connected accounts. Use the 'schedule_post' tool when they are ready to post. Your current time is ${new Date().toISOString()}.
+If the user wants to post something, map their requested '@' mentions to the connected accounts. Use the 'schedule_post' tool when they are ready to post. 
+CRITICAL TIMEZONE INSTRUCTION: The user is in Indian Standard Time (IST, UTC+5:30). Your current server time is ${new Date().toISOString()} (UTC). When the user asks to schedule a post at a specific time (e.g., "1:52 PM"), assume they mean IST. You MUST convert their requested IST time to the correct UTC ISO 8601 timestamp for the 'scheduledAt' parameter (e.g if they ask for 2 PM IST today, calculate the equivalent UTC time and output it).
 If the user asks for reports or stats (like "how many posts"), use the 'get_posting_stats' tool.
+If the user asks about specific posts (like "what is pending?" or "did it post?"), use the 'get_recent_posts' tool to find out, then summarize the results for them naturally.
 If the user asks for likes or analytics, use the 'get_post_analytics' tool.
 If the user attached an image or video, they will pass it as [Attached Media: URL]. Always include this exact URL in the mediaUrls parameter.`
         });
-        const chat = model.startChat();
+        const history = userHistories.get(telegramId) || [];
+        const chat = model.startChat({ history });
         // Construct the prompt with the media link if available
         let prompt = userMessage || "Here is a media file I want to post.";
         if (mediaUrl) {
             prompt += `\n\n[Attached Media: ${mediaUrl}]`;
         }
         const result = await chat.sendMessage(prompt);
-        const response = result.response;
-        const functionCalls = response.functionCalls();
-        if (functionCalls && functionCalls.length > 0) {
+        let response = result.response;
+        let functionCalls = response.functionCalls();
+        // We need to keep feeding function responses back to the model 
+        // until it actually produces text.
+        while (functionCalls && functionCalls.length > 0) {
             const call = functionCalls[0];
+            let functionResponseData = null;
             if (call && call.name === 'schedule_post') {
                 const { content, handles, scheduledAt, mediaUrls } = call.args;
-                const scheduleDate = scheduledAt === 'now' ? new Date() : new Date(scheduledAt);
-                // Save the post request to the database
-                await prisma.post.create({
-                    data: {
-                        userId: user.id,
-                        content: content,
-                        platforms: handles,
-                        mediaUrls: mediaUrls || [],
-                        scheduledAt: scheduleDate,
-                        status: "pending"
-                    }
-                });
-                const timeString = scheduledAt === 'now' ? 'Immediately' : scheduleDate.toLocaleString();
-                let replyMsg = `✅ Got it! I have scheduled your post.\n\n📝 Content: "${content}"\n📲 Accounts: ${handles.join(', ')}\n⏰ Time: ${timeString}`;
-                if (mediaUrls && mediaUrls.length > 0) {
-                    replyMsg += `\n🖼️ Media: 1 file attached.`;
+                let scheduleDate;
+                if (scheduledAt === 'now') {
+                    scheduleDate = new Date();
                 }
-                await ctx.reply(replyMsg);
+                else {
+                    // Force the model's output to be interpreted as IST if it isn't already explicit.
+                    // Important: ISO dates like 2026-03-09 contain '-' in the date itself, so we must
+                    // detect timezone only at the end of the string (Z or ±HH:MM), not by checking for '-'.
+                    let dateStr = String(scheduledAt).trim();
+                    const hasExplicitTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(dateStr);
+                    if (dateStr && !hasExplicitTimezone) {
+                        dateStr += '+05:30';
+                    }
+                    scheduleDate = new Date(dateStr);
+                }
+                const now = new Date();
+                // Validation: Check if the scheduled time is in the past (by more than 5 minutes to account for AI processing delays)
+                // Also check if scheduleDate is Invalid
+                if (isNaN(scheduleDate.getTime())) {
+                    functionResponseData = { error: "You provided an invalid date format. Please use ISO 8601." };
+                    await ctx.reply(`❌ I couldn't schedule the post. I misunderstood the date format. Please try again.`);
+                }
+                else if (scheduledAt !== 'now' && (now.getTime() - scheduleDate.getTime() > 5 * 60 * 1000)) {
+                    const formattedPastTime = scheduleDate.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'short', timeStyle: 'short' });
+                    functionResponseData = { error: `The time requested (${formattedPastTime} IST) has already passed.` };
+                    await ctx.reply(`❌ I couldn't schedule the post. The time you requested (${formattedPastTime} IST) has already passed. Please specify a future time.`);
+                }
+                else {
+                    // Find invalid handles before saving
+                    const invalidHandles = [];
+                    for (const handle of handles) {
+                        const cleanTargetHandle = handle.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+                        const account = user.accounts.find(acc => acc.handle.replace(/[^a-zA-Z0-9]/g, '').toLowerCase() === cleanTargetHandle);
+                        if (!account)
+                            invalidHandles.push(handle);
+                    }
+                    if (invalidHandles.length > 0) {
+                        functionResponseData = { error: `The following accounts are not connected: ${invalidHandles.join(', ')}` };
+                        await ctx.reply(`❌ Cannot schedule post. You have not connected these accounts: ${invalidHandles.join(', ')}. Please use /accounts to see your exact connected handles.`);
+                    }
+                    else {
+                        // Save the post request to the database
+                        await prisma.post.create({
+                            data: {
+                                userId: user.id,
+                                content: content,
+                                platforms: handles,
+                                mediaUrls: mediaUrls || [],
+                                scheduledAt: scheduleDate,
+                                status: "pending"
+                            }
+                        });
+                        const timeString = scheduledAt === 'now' ? 'Immediately' : scheduleDate.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'short', timeStyle: 'short' }) + ' (IST)';
+                        functionResponseData = { success: true, scheduledTimeIST: timeString };
+                        let replyMsg = `✅ Got it! I have scheduled your post.\n\n📝 Content: "${content}"\n📲 Accounts: ${handles.join(', ')}\n⏰ Time: ${timeString}`;
+                        if (mediaUrls && mediaUrls.length > 0)
+                            replyMsg += `\n🖼️ Media: 1 file attached.`;
+                        await ctx.reply(replyMsg);
+                    }
+                }
             }
             else if (call && call.name === 'get_posting_stats') {
                 const { handle } = call.args;
-                // Prisma can't directly query "array contains element" easily in some versions without raw queries,
-                // but for string arrays, Prisma supports 'has'. 
                 let whereClause = { userId: user.id };
                 if (handle) {
                     whereClause.platforms = { has: handle };
@@ -237,24 +307,44 @@ If the user attached an image or video, they will pass it as [Attached Media: UR
                 const pending = await prisma.post.count({ where: { ...whereClause, status: "pending" } });
                 const published = await prisma.post.count({ where: { ...whereClause, status: "published" } });
                 const failed = await prisma.post.count({ where: { ...whereClause, status: "failed" } });
-                let reportMsg = `📊 *Posting Report${handle ? ` for ${handle}` : ''}*\n\n`;
-                reportMsg += `✅ Published: ${published}\n`;
-                reportMsg += `⏳ Pending: ${pending}\n`;
-                reportMsg += `❌ Failed: ${failed}`;
-                await ctx.replyWithMarkdown(reportMsg);
+                functionResponseData = { pending, published, failed, handle: handle || 'all' };
+            }
+            else if (call && call.name === 'get_recent_posts') {
+                const { status, limit } = call.args;
+                let whereClause = { userId: user.id };
+                if (status) {
+                    whereClause.status = status;
+                }
+                const posts = await prisma.post.findMany({
+                    where: whereClause,
+                    orderBy: { createdAt: 'desc' },
+                    take: limit || 5
+                });
+                const postsData = posts.map(p => ({
+                    content: p.content,
+                    status: p.status,
+                    scheduledFor: p.scheduledAt?.toISOString(),
+                    accounts: p.platforms
+                }));
+                functionResponseData = { posts: postsData };
             }
             else if (call && call.name === 'get_post_analytics') {
                 const { handle } = call.args;
-                // Mock data since APIs are not connected
-                let analyticsMsg = `📈 *Analytics${handle ? ` for ${handle}` : ''}*\n\n`;
-                analyticsMsg += `_(Note: Social Media APIs are not connected yet, so this is mock data.)_\n\n`;
-                analyticsMsg += `❤️ Total Likes: ${Math.floor(Math.random() * 500) + 12}\n`;
-                analyticsMsg += `💬 Comments: ${Math.floor(Math.random() * 50) + 2}\n`;
-                analyticsMsg += `🔁 Shares: ${Math.floor(Math.random() * 100) + 5}`;
-                await ctx.replyWithMarkdown(analyticsMsg);
+                functionResponseData = { likes: Math.floor(Math.random() * 500) + 12, comments: Math.floor(Math.random() * 50) + 2, shares: Math.floor(Math.random() * 100) + 5, mock: true };
             }
-        }
-        else {
+            // Send the function response back to the model
+            const secondResult = await chat.sendMessage([{
+                    functionResponse: {
+                        name: call.name,
+                        response: functionResponseData || { status: "ok" }
+                    }
+                }]);
+            response = secondResult.response;
+            functionCalls = response.functionCalls();
+        } // End of while loop
+        // Save the finalized chat history
+        userHistories.set(telegramId, await chat.getHistory());
+        if (!response.functionCalls() || response.functionCalls()?.length === 0) {
             // Gemini just wants to reply with normal text
             const textResponse = response.text();
             if (textResponse) {
@@ -267,10 +357,22 @@ If the user attached an image or video, they will pass it as [Attached Media: UR
         await ctx.reply("Sorry, I ran into an error processing that request.");
     }
 });
-startServer();
-bot.launch().then(() => {
+startServer(undefined, { startBackgroundScheduler: false });
+// Start the scheduler immediately, regardless of whether the Telegram bot connection has fully established yet.
+startScheduler(bot);
+bot.launch({ dropPendingUpdates: true })
+    .then(() => {
     console.log('🤖 SocialBuddy Bot is running with Gemini Brain!');
-    startScheduler(bot);
-}).catch(console.error);
-process.once('SIGINT', () => bot.stop('SIGINT'));
-process.once('SIGTERM', () => bot.stop('SIGTERM'));
+})
+    .catch((err) => {
+    console.error('❌ Failed to launch Telegram Bot cleanly:', err);
+});
+// Enable graceful stop
+process.once('SIGINT', () => {
+    bot.stop('SIGINT');
+    process.exit(0);
+});
+process.once('SIGTERM', () => {
+    bot.stop('SIGTERM');
+    process.exit(0);
+});
