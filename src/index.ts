@@ -202,12 +202,16 @@ bot.on('message', async (ctx) => {
       const contentType = response.headers['content-type'] || 'application/octet-stream';
       
       let ext = '.bin';
-      if (contentType.includes('jpeg') || contentType.includes('jpg')) ext = '.jpg';
-      else if (contentType.includes('png')) ext = '.png';
-      else if (contentType.includes('mp4')) ext = '.mp4';
-      else if (contentType.includes('gif')) ext = '.gif';
+      const urlLower = tempMediaUrl.toLowerCase();
       
-      mediaUrl = await uploadBufferToMinio(buffer, contentType, ext);
+      if (contentType.includes('jpeg') || contentType.includes('jpg') || urlLower.endsWith('.jpg') || urlLower.endsWith('.jpeg')) ext = '.jpg';
+      else if (contentType.includes('png') || urlLower.endsWith('.png')) ext = '.png';
+      else if (contentType.includes('mp4') || urlLower.endsWith('.mp4')) ext = '.mp4';
+      else if (contentType.includes('gif') || urlLower.endsWith('.gif')) ext = '.gif';
+      else if (msg.photo) ext = '.jpg'; // Telegram photos are always jpegs
+      else if (msg.video) ext = '.mp4'; // Telegram videos are typically mp4
+      
+      mediaUrl = await uploadBufferToMinio(buffer, contentType === 'application/octet-stream' ? (ext === '.jpg' ? 'image/jpeg' : (ext === '.mp4' ? 'video/mp4' : contentType)) : contentType, ext);
     } catch (e) {
       console.error("Failed to upload to Minio", e);
       await ctx.reply("Sorry, I failed to store your media file.");

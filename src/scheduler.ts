@@ -78,8 +78,24 @@ async function publishToPlatform(platform: string, handle: string, content: stri
       
       console.log(`[Publishing] Successfully published to Instagram! IG Media ID: ${publishResponse.data.id}\n`);
       return true;
+    } else if (platform === 'facebook') {
+      let endpoint = `https://graph.facebook.com/v19.0/me/feed`;
+      const payload: any = { access_token: token };
+
+      if (mediaUrls && mediaUrls.length > 0) {
+         // If there's an image, post to /me/photos instead
+         endpoint = `https://graph.facebook.com/v19.0/me/photos`;
+         payload.url = mediaUrls[0];
+         payload.caption = content;
+      } else {
+         payload.message = content;
+      }
+
+      const publishResponse = await axios.post(endpoint, null, { params: payload });
+      console.log(`[Publishing] Successfully published to Facebook Page! Post ID: ${publishResponse.data.id}\n`);
+      return true;
     } else {
-      // MOCK FALLBACK
+      // MOCK FALLBACK for unknown platforms
       await new Promise(resolve => setTimeout(resolve, 1500));
       console.log(`[MOCK API] Successfully published to ${platform}!\n`);
       return true; 
@@ -125,11 +141,14 @@ export function startScheduler(bot: Telegraf) {
         const successPlatforms: string[] = [];
 
         for (const handle of post.platforms) {
-          // Look up the specific connected account to get its OAuth token
-          const account = post.user.accounts.find(acc => acc.handle === handle);
+          const cleanTargetHandle = handle.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+          // Look up the specific connected account to get its OAuth token (case-insensitive, ignoring '@' and spaces)
+          const account = post.user.accounts.find(acc => 
+            acc.handle.replace(/[^a-zA-Z0-9]/g, '').toLowerCase() === cleanTargetHandle
+          );
           
           if (!account) {
-            console.error(`[Scheduler] Account not found for handle: ${handle}`);
+            console.error(`[Scheduler] Account not found for handle: ${handle} (Target clean: ${cleanTargetHandle})`);
             allPlatformsSucceeded = false;
             failedPlatforms.push(handle);
             continue;

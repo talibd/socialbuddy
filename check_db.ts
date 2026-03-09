@@ -1,15 +1,18 @@
 import { PrismaClient } from '@prisma/client';
-import { Pool } from 'pg';
-import { PrismaPg } from '@prisma/adapter-pg';
-import dotenv from 'dotenv';
-dotenv.config();
 
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-const adapter = new PrismaPg(pool);
-const prisma = new PrismaClient({ adapter });
+const prisma = new PrismaClient();
 
-async function main() {
-    const accounts = await prisma.socialAccount.findMany();
-    console.log("Accounts in DB:", accounts);
+async function run() {
+  const accounts = await prisma.socialAccount.findMany();
+  console.log("--- CONNECTED ACCOUNTS IN DB ---");
+  accounts.forEach(a => console.log(`[${a.platform}] ${a.handle}`));
+
+  const posts = await prisma.post.findMany({ 
+    orderBy: { createdAt: 'desc' }, 
+    take: 5
+  });
+  console.log("\n--- RECENT POSTS ---");
+  posts.forEach(p => console.log(`[${p.status}] Handles: ${p.platforms.join(', ')}`));
 }
-main().catch(console.error).finally(() => pool.end());
+
+run().finally(() => prisma.$disconnect());
