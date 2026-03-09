@@ -405,10 +405,23 @@ If the user attached an image or video, they will pass it as [Attached Media: UR
 
 startServer();
 
-bot.launch().then(() => {
-  console.log('🤖 SocialBuddy Bot is running with Gemini Brain!');
-  startScheduler(bot);
-}).catch(console.error);
+// Start the scheduler immediately, regardless of whether the Telegram bot connection has fully established yet.
+startScheduler(bot); 
 
-process.once('SIGINT', () => bot.stop('SIGINT'));
-process.once('SIGTERM', () => bot.stop('SIGTERM'));
+bot.launch({ dropPendingUpdates: true })
+  .then(() => {
+    console.log('🤖 SocialBuddy Bot is running with Gemini Brain!');
+  })
+  .catch((err) => {
+    console.error('❌ Failed to launch Telegram Bot cleanly:', err);
+  });
+
+// Enable graceful stop
+process.once('SIGINT', () => {
+    bot.stop('SIGINT');
+    process.exit(0);
+});
+process.once('SIGTERM', () => {
+    bot.stop('SIGTERM');
+    process.exit(0);
+});

@@ -1,0 +1,2 @@
+[dotenv@17.3.1] injecting env (0) from .env -- tip: 🔐 prevent building .env in docker: https://dotenvx.com/prebuild
+🌐 OAuth Server running on http://localhost:3000
