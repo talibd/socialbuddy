@@ -278,11 +278,12 @@ If the user attached an image or video, they will pass it as [Attached Media: UR
         if (scheduledAt === 'now') {
           scheduleDate = new Date();
         } else {
-          // Force the model's output to be interpreted as IST if it isn't already explicit
-          // The model often spits out "2026-03-09T13:50:00" without the timezone offset.
-          // By appending +05:30 if it's missing, we force JavaScript to parse it as IST.
-          let dateStr = scheduledAt;
-          if (dateStr && !dateStr.includes('Z') && !dateStr.includes('+') && !dateStr.includes('-')) {
+          // Force the model's output to be interpreted as IST if it isn't already explicit.
+          // Important: ISO dates like 2026-03-09 contain '-' in the date itself, so we must
+          // detect timezone only at the end of the string (Z or ±HH:MM), not by checking for '-'.
+          let dateStr = String(scheduledAt).trim();
+          const hasExplicitTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(dateStr);
+          if (dateStr && !hasExplicitTimezone) {
              dateStr += '+05:30';
           }
           scheduleDate = new Date(dateStr);
@@ -403,7 +404,7 @@ If the user attached an image or video, they will pass it as [Attached Media: UR
   }
 });
 
-startServer();
+startServer(undefined, { startBackgroundScheduler: false });
 
 // Start the scheduler immediately, regardless of whether the Telegram bot connection has fully established yet.
 startScheduler(bot); 
