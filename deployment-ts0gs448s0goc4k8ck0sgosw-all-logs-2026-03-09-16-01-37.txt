@@ -1,0 +1,60 @@
+2026-Mar-09 15:37:20.751548 Starting deployment of talibd/socialbuddy:main to localhost.
+2026-Mar-09 15:37:20.983241 Preparing container with helper image: ghcr.io/coollabsio/coolify-helper:1.0.12
+2026-Mar-09 15:37:21.087668 [DEBUG] [CMD]: docker stop -t 30 ts0gs448s0goc4k8ck0sgosw
+2026-Mar-09 15:37:21.087668 [DEBUG] Error response from daemon: No such container: ts0gs448s0goc4k8ck0sgosw
+2026-Mar-09 15:37:21.230723 [DEBUG] [CMD]: docker run -d --network coolify --name ts0gs448s0goc4k8ck0sgosw  --rm -v /var/run/docker.sock:/var/run/docker.sock ghcr.io/coollabsio/coolify-helper:1.0.12
+2026-Mar-09 15:37:21.230723 [DEBUG] 97494b3dcbc15231b0f7532afd30ebee42ebcbb2a86dda6c7fce35f639391032
+2026-Mar-09 15:37:22.494651 [DEBUG] [CMD]: docker exec ts0gs448s0goc4k8ck0sgosw bash -c 'GIT_SSH_COMMAND="ssh -o ConnectTimeout=30 -p 22 -o Port=22 -o LogLevel=ERROR -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" git ls-remote https://github.com/talibd/socialbuddy refs/heads/main'
+2026-Mar-09 15:37:22.494651 [DEBUG] 8dc8e559192d8053132b5920d799c788f748de17	refs/heads/main
+2026-Mar-09 15:37:22.507473 ----------------------------------------
+2026-Mar-09 15:37:22.512437 Importing talibd/socialbuddy:main (commit sha 8dc8e559192d8053132b5920d799c788f748de17) to /artifacts/ts0gs448s0goc4k8ck0sgosw.
+2026-Mar-09 15:37:22.642670 [DEBUG] [CMD]: docker exec ts0gs448s0goc4k8ck0sgosw bash -c 'git clone --depth=1 --recurse-submodules --shallow-submodules -b 'main' 'https://github.com/talibd/socialbuddy' '/artifacts/ts0gs448s0goc4k8ck0sgosw' && cd '/artifacts/ts0gs448s0goc4k8ck0sgosw' && if [ -f .gitmodules ]; then sed -i "s#git@\(.*\):#https://\1/#g" '/artifacts/ts0gs448s0goc4k8ck0sgosw'/.gitmodules || true && git submodule sync && GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" git submodule update --init --recursive --depth=1; fi && cd '/artifacts/ts0gs448s0goc4k8ck0sgosw' && GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" git lfs pull'
+2026-Mar-09 15:37:22.642670 [DEBUG] Cloning into '/artifacts/ts0gs448s0goc4k8ck0sgosw'...
+2026-Mar-09 15:37:23.949357 [DEBUG] [CMD]: docker exec ts0gs448s0goc4k8ck0sgosw bash -c 'cd /artifacts/ts0gs448s0goc4k8ck0sgosw && git log -1 8dc8e559192d8053132b5920d799c788f748de17 --pretty=%B'
+2026-Mar-09 15:37:23.949357 [DEBUG] fix schedule issue
+2026-Mar-09 15:37:24.062949 [DEBUG] [CMD]: docker images -q d000g4808o0s0c4cksc08c8s:8dc8e559192d8053132b5920d799c788f748de17 2>/dev/null
+2026-Mar-09 15:37:24.062949 [DEBUG] 4b0ef0ff9679
+2026-Mar-09 15:37:24.071619 No configuration changed & image found (d000g4808o0s0c4cksc08c8s:8dc8e559192d8053132b5920d799c788f748de17) with the same Git Commit SHA. Build step skipped.
+2026-Mar-09 15:37:24.409022 [DEBUG] [CMD]: docker exec ts0gs448s0goc4k8ck0sgosw bash -c 'cat /artifacts/ts0gs448s0goc4k8ck0sgosw/Dockerfile'
+2026-Mar-09 15:37:24.409022 [DEBUG] FROM node:22-alpine
+2026-Mar-09 15:37:24.409022 [DEBUG] 
+2026-Mar-09 15:37:24.409022 [DEBUG] # Set working directory
+2026-Mar-09 15:37:24.409022 [DEBUG] WORKDIR /app
+2026-Mar-09 15:37:24.409022 [DEBUG] 
+2026-Mar-09 15:37:24.409022 [DEBUG] # Install dependencies
+2026-Mar-09 15:37:24.409022 [DEBUG] COPY package*.json ./
+2026-Mar-09 15:37:24.409022 [DEBUG] COPY prisma ./prisma/
+2026-Mar-09 15:37:24.409022 [DEBUG] RUN npm install --include=dev
+2026-Mar-09 15:37:24.409022 [DEBUG] 
+2026-Mar-09 15:37:24.409022 [DEBUG] # Copy source code
+2026-Mar-09 15:37:24.409022 [DEBUG] COPY . .
+2026-Mar-09 15:37:24.409022 [DEBUG] 
+2026-Mar-09 15:37:24.409022 [DEBUG] # Generate Prisma Client & Build
+2026-Mar-09 15:37:24.409022 [DEBUG] RUN npx prisma generate
+2026-Mar-09 15:37:24.409022 [DEBUG] RUN npx tsc
+2026-Mar-09 15:37:24.409022 [DEBUG] 
+2026-Mar-09 15:37:24.409022 [DEBUG] # Make the start script executable
+2026-Mar-09 15:37:24.409022 [DEBUG] RUN chmod +x start.sh
+2026-Mar-09 15:37:24.409022 [DEBUG] 
+2026-Mar-09 15:37:24.409022 [DEBUG] # Start the bot
+2026-Mar-09 15:37:24.409022 [DEBUG] CMD ["./start.sh"]
+2026-Mar-09 15:37:24.604509 [DEBUG] Creating .env file with runtime variables for container.
+2026-Mar-09 15:37:24.832999 ----------------------------------------
+2026-Mar-09 15:37:24.837209 Rolling update started.
+2026-Mar-09 15:37:25.151515 [DEBUG] [CMD]: docker exec ts0gs448s0goc4k8ck0sgosw bash -c 'COOLIFY_URL=https://socialbuddy.btaa.org.in COOLIFY_FQDN=socialbuddy.btaa.org.in COOLIFY_BRANCH=main COOLIFY_RESOURCE_UUID=d000g4808o0s0c4cksc08c8s  docker compose --project-name d000g4808o0s0c4cksc08c8s --project-directory /artifacts/ts0gs448s0goc4k8ck0sgosw -f /artifacts/ts0gs448s0goc4k8ck0sgosw/docker-compose.yaml up --build -d'
+2026-Mar-09 15:37:25.151515 [DEBUG] time="2026-03-09T15:37:25Z" level=warning msg="Found orphan containers ([d000g4808o0s0c4cksc08c8s-152710188172]) for this project. If you removed or renamed this service in your compose file, you can run this command with the --remove-orphans flag to clean it up."
+2026-Mar-09 15:37:25.154908 [DEBUG] Container d000g4808o0s0c4cksc08c8s-153719974383  Creating
+2026-Mar-09 15:37:25.215639 [DEBUG] d000g4808o0s0c4cksc08c8s-153719974383 Your kernel does not support memory swappiness capabilities or the cgroup is not mounted. Memory swappiness discarded.
+2026-Mar-09 15:37:25.219512 [DEBUG] Container d000g4808o0s0c4cksc08c8s-153719974383  Created
+2026-Mar-09 15:37:25.231980 [DEBUG] Container d000g4808o0s0c4cksc08c8s-153719974383  Starting
+2026-Mar-09 15:37:25.410594 [DEBUG] Container d000g4808o0s0c4cksc08c8s-153719974383  Started
+2026-Mar-09 15:37:25.448909 New container started.
+2026-Mar-09 15:37:25.471744 Removing old containers.
+2026-Mar-09 15:37:56.152021 [DEBUG] [CMD]: docker stop -t 30 d000g4808o0s0c4cksc08c8s-152710188172
+2026-Mar-09 15:37:56.152021 [DEBUG] d000g4808o0s0c4cksc08c8s-152710188172
+2026-Mar-09 15:37:56.264878 [DEBUG] [CMD]: docker rm -f d000g4808o0s0c4cksc08c8s-152710188172
+2026-Mar-09 15:37:56.264878 [DEBUG] d000g4808o0s0c4cksc08c8s-152710188172
+2026-Mar-09 15:37:56.270490 Rolling update completed.
+2026-Mar-09 15:37:56.534737 Gracefully shutting down build container: ts0gs448s0goc4k8ck0sgosw
+2026-Mar-09 15:37:56.733060 [DEBUG] [CMD]: docker stop -t 30 ts0gs448s0goc4k8ck0sgosw
+2026-Mar-09 15:37:56.733060 [DEBUG] ts0gs448s0goc4k8ck0sgosw
