@@ -271,6 +271,14 @@ If the user attached an image or video, they will pass it as [Attached Media: UR
         const { content, handles, scheduledAt, mediaUrls } = call.args as any;
         
         const scheduleDate = scheduledAt === 'now' ? new Date() : new Date(scheduledAt);
+        const now = new Date();
+
+        // Validation: Check if the scheduled time is in the past (by more than 5 minutes to account for AI processing delays)
+        if (scheduledAt !== 'now' && (now.getTime() - scheduleDate.getTime() > 5 * 60 * 1000)) {
+           const formattedPastTime = scheduleDate.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'short', timeStyle: 'short' });
+           await ctx.reply(`❌ I couldn't schedule the post. The time you requested (${formattedPastTime} IST) has already passed. Please specify a future time.`);
+           return;
+        }
 
         // Save the post request to the database
         await prisma.post.create({
@@ -284,7 +292,7 @@ If the user attached an image or video, they will pass it as [Attached Media: UR
           }
         });
 
-        const timeString = scheduledAt === 'now' ? 'Immediately' : scheduleDate.toLocaleString();
+        const timeString = scheduledAt === 'now' ? 'Immediately' : scheduleDate.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'short', timeStyle: 'short' }) + ' (IST)';
         let replyMsg = `✅ Got it! I have scheduled your post.\n\n📝 Content: "${content}"\n📲 Accounts: ${handles.join(', ')}\n⏰ Time: ${timeString}`;
         
         if (mediaUrls && mediaUrls.length > 0) {
