@@ -19,6 +19,10 @@ async function publishToPlatform(platform: string, handle: string, content: stri
   }
   
   try {
+    if (mediaUrls && mediaUrls.length > 0 && mediaUrls[0].includes('localhost')) {
+       console.warn(`[Publishing Warning] The media URL (${mediaUrls[0]}) contains 'localhost'. Facebook/Instagram Graph API cannot download from localhost. You must configure a public MINIO_ENDPOINT in your .env file.`);
+    }
+
     if (platform === 'instagram') {
       if (!mediaUrls || mediaUrls.length === 0) {
          console.error(`[Publishing] Instagram requires an image or video URL to post.`);
@@ -182,7 +186,7 @@ export function startScheduler(bot: Telegraf) {
 
         // Notify the user via Telegram
         try {
-          let notifyMsg = `🔔 *Post Update*\n\n`;
+          let notifyMsg = `🔔 Post Update\n\n`;
           if (finalStatus === 'published') {
             notifyMsg += `✅ Your scheduled post has been published successfully to: ${successPlatforms.join(', ')}\n\n`;
           } else {
@@ -192,7 +196,8 @@ export function startScheduler(bot: Telegraf) {
           }
           notifyMsg += `📝 Content: "${post.content}"`;
 
-          await bot.telegram.sendMessage(post.user.telegramId, notifyMsg, { parse_mode: 'Markdown' });
+          // Using no parse_mode (plain text) to avoid crashes with user-provided characters like *, _, [, ]
+          await bot.telegram.sendMessage(post.user.telegramId, notifyMsg);
         } catch (botErr) {
           console.error(`[Scheduler] Failed to notify user ${post.user.telegramId}:`, botErr);
         }

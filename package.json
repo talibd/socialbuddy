@@ -5,6 +5,7 @@
   "main": "index.js",
   "scripts": {
     "dev": "tsx -r dotenv/config src/index.ts",
+    "tunnel": "lt --port 3000 --subdomain socialbuddy-live-url",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
@@ -33,6 +34,7 @@
     "@types/express": "^5.0.6",
     "@types/node": "^25.3.5",
     "@types/node-cron": "^3.0.11",
+    "localtunnel": "^2.0.2",
     "prisma": "^7.4.2",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
