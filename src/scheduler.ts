@@ -60,13 +60,22 @@ async function publishToPlatform(platform: string, handle: string, content: stri
          return false;
       }
 
+      const isVideo = imageUrl.toLowerCase().match(/\.(mp4|mov)$/i);
+      const params: any = {
+        caption: content,
+        access_token: token
+      };
+
+      if (isVideo) {
+        params.video_url = imageUrl;
+        params.media_type = 'REELS'; // Reels is typically used for video posts now
+      } else {
+        params.image_url = imageUrl;
+      }
+
       // Step 1: Create a media container
       const containerResponse = await axios.post(`https://graph.facebook.com/v19.0/${instagramAccountId}/media`, null, {
-        params: {
-          image_url: imageUrl,
-          caption: content,
-          access_token: token
-        }
+        params: params
       });
 
       const creationId = containerResponse.data.id;
@@ -87,10 +96,19 @@ async function publishToPlatform(platform: string, handle: string, content: stri
       const payload: any = { access_token: token };
 
       if (mediaUrls && mediaUrls.length > 0) {
-         // If there's an image, post to /me/photos instead
-         endpoint = `https://graph.facebook.com/v19.0/me/photos`;
-         payload.url = mediaUrls[0];
-         payload.caption = content;
+         const mediaUrl = mediaUrls[0];
+         const isVideo = mediaUrl.toLowerCase().match(/\.(mp4|mov)$/i);
+
+         if (isVideo) {
+            endpoint = `https://graph.facebook.com/v19.0/me/videos`;
+            payload.file_url = mediaUrl;
+            payload.description = content;
+         } else {
+            // If there's an image, post to /me/photos instead
+            endpoint = `https://graph.facebook.com/v19.0/me/photos`;
+            payload.url = mediaUrl;
+            payload.caption = content;
+         }
       } else {
          payload.message = content;
       }
