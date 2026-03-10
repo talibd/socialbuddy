@@ -34,5 +34,6 @@ model Post {
   platforms   String[] // Array of handles e.g., ['@my_twitter', '@work_linkedin']
   scheduledAt DateTime?
   status      String   @default("pending") // 'pending', 'published', 'failed'
+  errorMsg    String?  // The reason for failure (if any)
   createdAt   DateTime @default(now())
 }

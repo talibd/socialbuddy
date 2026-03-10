@@ -58,7 +58,7 @@ const getPostingStatsDeclaration = {
 };
 const getRecentPostsDeclaration = {
     name: "get_recent_posts",
-    description: "Gets the user's recent posts (including content, status, and time) so you can tell them specifically what is pending or published.",
+    description: "Gets the user's recent posts (including content, status, time, and ANY error/failure reasons) so you can tell them specifically what is pending, published, or why it failed.",
     parameters: {
         type: SchemaType.OBJECT,
         properties: {
@@ -71,6 +71,41 @@ const getRecentPostsDeclaration = {
                 description: "Optional. Number of posts to retrieve (default 5).",
             }
         },
+    },
+};
+const cancelPostDeclaration = {
+    name: "cancel_post",
+    description: "Cancels a pending scheduled post.",
+    parameters: {
+        type: SchemaType.OBJECT,
+        properties: {
+            postId: { type: SchemaType.STRING, description: "The ID of the post to cancel. Get this from get_recent_posts first." }
+        },
+        required: ["postId"],
+    },
+};
+const editPostDeclaration = {
+    name: "edit_post_content",
+    description: "Edits the text content of a pending scheduled post.",
+    parameters: {
+        type: SchemaType.OBJECT,
+        properties: {
+            postId: { type: SchemaType.STRING, description: "The ID of the post to edit." },
+            newContent: { type: SchemaType.STRING, description: "The new exact text content for the post." }
+        },
+        required: ["postId", "newContent"],
+    },
+};
+const reschedulePostDeclaration = {
+    name: "reschedule_post",
+    description: "Changes the scheduled time of a pending post.",
+    parameters: {
+        type: SchemaType.OBJECT,
+        properties: {
+            postId: { type: SchemaType.STRING, description: "The ID of the post to reschedule." },
+            newScheduledAt: { type: SchemaType.STRING, description: "The new ISO 8601 date and time to publish. Use 'now' for immediate." }
+        },
+        required: ["postId", "newScheduledAt"],
     },
 };
 const getPostAnalyticsDeclaration = {
@@ -166,6 +201,24 @@ bot.on('message', async (ctx) => {
             console.error("Failed to get video link", e);
         }
     }
+    // Extract document link (uncompressed file uploads) if present
+    if (msg.document) {
+        // Only process it if it looks like an image or video mime type
+        const mime = msg.document.mime_type || '';
+        if (mime.startsWith('image/') || mime.startsWith('video/')) {
+            try {
+                const link = await ctx.telegram.getFileLink(msg.document.file_id);
+                tempMediaUrl = link.toString();
+            }
+            catch (e) {
+                console.error("Failed to get document link", e);
+            }
+        }
+        else {
+            await ctx.reply("I can only attach images and videos. The document you sent is not a supported media type.");
+            return;
+        }
+    }
     if (tempMediaUrl) {
         try {
             const response = await axios.get(tempMediaUrl, { responseType: 'arraybuffer' });
@@ -181,10 +234,18 @@ bot.on('message', async (ctx) => {
                 ext = '.mp4';
             else if (contentType.includes('gif') || urlLower.endsWith('.gif'))
                 ext = '.gif';
+            else if (contentType.includes('quicktime') || urlLower.endsWith('.mov'))
+                ext = '.mov';
             else if (msg.photo)
                 ext = '.jpg'; // Telegram photos are always jpegs
             else if (msg.video)
                 ext = '.mp4'; // Telegram videos are typically mp4
+            else if (msg.document && msg.document.file_name) {
+                // Try to extract extension from the original file name if it's a document
+                const match = msg.document.file_name.match(/\.[0-9a-z]+$/i);
+                if (match)
+                    ext = match[0].toLowerCase();
+            }
             mediaUrl = await uploadBufferToMinio(buffer, contentType === 'application/octet-stream' ? (ext === '.jpg' ? 'image/jpeg' : (ext === '.mp4' ? 'video/mp4' : contentType)) : contentType, ext);
         }
         catch (e) {
@@ -211,12 +272,13 @@ bot.on('message', async (ctx) => {
         // Initialize Gemini model with the Tool
         const model = genAI.getGenerativeModel({
             model: "gemini-2.5-flash",
-            tools: [{ functionDeclarations: [schedulePostDeclaration, getPostingStatsDeclaration, getRecentPostsDeclaration, getPostAnalyticsDeclaration] }],
+            tools: [{ functionDeclarations: [schedulePostDeclaration, getPostingStatsDeclaration, getRecentPostsDeclaration, getPostAnalyticsDeclaration, cancelPostDeclaration, editPostDeclaration, reschedulePostDeclaration] }],
             systemInstruction: `You are a social media manager bot. The user currently has these connected accounts: ${accountsList}.
 If the user wants to post something, map their requested '@' mentions to the connected accounts. Use the 'schedule_post' tool when they are ready to post. 
-CRITICAL TIMEZONE INSTRUCTION: The user is in Indian Standard Time (IST, UTC+5:30). Your current server time is ${new Date().toISOString()} (UTC). When the user asks to schedule a post at a specific time (e.g., "1:52 PM"), assume they mean IST. You MUST convert their requested IST time to the correct UTC ISO 8601 timestamp for the 'scheduledAt' parameter (e.g if they ask for 2 PM IST today, calculate the equivalent UTC time and output it).
+CRITICAL TIMEZONE INSTRUCTION: The user is in Indian Standard Time (IST, UTC+5:30). Your current server time is ${new Date().toISOString()} (UTC). When the user asks to schedule a post at a specific time (e.g., "1:52 PM"), assume they mean IST. You MUST convert their requested IST time to the correct UTC ISO 8601 timestamp for the 'scheduledAt' parameter.
 If the user asks for reports or stats (like "how many posts"), use the 'get_posting_stats' tool.
-If the user asks about specific posts (like "what is pending?" or "did it post?"), use the 'get_recent_posts' tool to find out, then summarize the results for them naturally.
+If the user asks about specific posts (like "what is pending?" or "did it post?"), use the 'get_recent_posts' tool to find out, then summarize the results for them naturally. If a post failed, 'get_recent_posts' will return the exact reason in the 'errorMsg' field. ALWAYS use this field to explain to the user exactly why their post failed.
+If the user asks to edit, cancel, or reschedule a post, ALWAYS use 'get_recent_posts' first to find the exact 'id' of the user's pending post, then use the appropriate tool (cancel_post, edit_post_content, or reschedule_post).
 If the user asks for likes or analytics, use the 'get_post_analytics' tool.
 If the user attached an image or video, they will pass it as [Attached Media: URL]. Always include this exact URL in the mediaUrls parameter.`
         });
@@ -321,16 +383,78 @@ If the user attached an image or video, they will pass it as [Attached Media: UR
                     take: limit || 5
                 });
                 const postsData = posts.map(p => ({
+                    id: p.id,
                     content: p.content,
                     status: p.status,
                     scheduledFor: p.scheduledAt?.toISOString(),
-                    accounts: p.platforms
+                    accounts: p.platforms,
+                    errorMsg: p.errorMsg
                 }));
                 functionResponseData = { posts: postsData };
             }
             else if (call && call.name === 'get_post_analytics') {
                 const { handle } = call.args;
                 functionResponseData = { likes: Math.floor(Math.random() * 500) + 12, comments: Math.floor(Math.random() * 50) + 2, shares: Math.floor(Math.random() * 100) + 5, mock: true };
+            }
+            else if (call && call.name === 'cancel_post') {
+                const { postId } = call.args;
+                const post = await prisma.post.findUnique({ where: { id: postId, userId: user.id } });
+                if (!post) {
+                    functionResponseData = { error: "Post not found or doesn't belong to you." };
+                }
+                else if (post.status !== 'pending') {
+                    functionResponseData = { error: "You can only cancel pending posts." };
+                }
+                else {
+                    await prisma.post.delete({ where: { id: postId } });
+                    functionResponseData = { success: true, message: "Post successfully canceled and deleted." };
+                }
+            }
+            else if (call && call.name === 'edit_post_content') {
+                const { postId, newContent } = call.args;
+                const post = await prisma.post.findUnique({ where: { id: postId, userId: user.id } });
+                if (!post) {
+                    functionResponseData = { error: "Post not found." };
+                }
+                else if (post.status !== 'pending') {
+                    functionResponseData = { error: "You can only edit pending posts." };
+                }
+                else {
+                    await prisma.post.update({ where: { id: postId }, data: { content: newContent } });
+                    functionResponseData = { success: true, newContent };
+                }
+            }
+            else if (call && call.name === 'reschedule_post') {
+                const { postId, newScheduledAt } = call.args;
+                const post = await prisma.post.findUnique({ where: { id: postId, userId: user.id } });
+                if (!post) {
+                    functionResponseData = { error: "Post not found." };
+                }
+                else if (post.status !== 'pending') {
+                    functionResponseData = { error: "You can only reschedule pending posts." };
+                }
+                else {
+                    let scheduleDate;
+                    if (newScheduledAt === 'now') {
+                        scheduleDate = new Date();
+                    }
+                    else {
+                        let dateStr = String(newScheduledAt).trim();
+                        const hasExplicitTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(dateStr);
+                        if (dateStr && !hasExplicitTimezone) {
+                            dateStr += '+05:30';
+                        }
+                        scheduleDate = new Date(dateStr);
+                    }
+                    if (isNaN(scheduleDate.getTime())) {
+                        functionResponseData = { error: "Invalid date format." };
+                    }
+                    else {
+                        await prisma.post.update({ where: { id: postId }, data: { scheduledAt: scheduleDate } });
+                        const timeStr = newScheduledAt === 'now' ? 'Immediately' : scheduleDate.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }) + ' (IST)';
+                        functionResponseData = { success: true, newTime: timeStr };
+                    }
+                }
             }
             // Send the function response back to the model
             const secondResult = await chat.sendMessage([{

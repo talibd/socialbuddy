@@ -20,7 +20,7 @@ async function publishToPlatform(platform, handle, content, mediaUrls, token) {
         if (platform === 'instagram') {
             if (!mediaUrls || mediaUrls.length === 0) {
                 console.error(`[Publishing] Instagram requires an image or video URL to post.`);
-                return false;
+                return { success: false, errorMsg: 'Instagram requires an attached image or video to post.' };
             }
             const imageUrl = mediaUrls[0]; // IG Graph API currently supports 1 image for basic publishing without carousels
             // We need to find the Instagram User ID from the token again, or parse it from DB
@@ -47,7 +47,7 @@ async function publishToPlatform(platform, handle, content, mediaUrls, token) {
             }
             if (!instagramAccountId) {
                 console.error(`[Publishing] Could not find Instagram Business Account ID for this user.`);
-                return false;
+                return { success: false, errorMsg: 'Could not find a connected Instagram Business Account on this Facebook page.' };
             }
             const isVideo = imageUrl.toLowerCase().match(/\.(mp4|mov)$/i);
             const params = {
@@ -75,7 +75,7 @@ async function publishToPlatform(platform, handle, content, mediaUrls, token) {
                 }
             });
             console.log(`[Publishing] Successfully published to Instagram! IG Media ID: ${publishResponse.data.id}\n`);
-            return true;
+            return { success: true };
         }
         else if (platform === 'facebook') {
             let endpoint = `https://graph.facebook.com/v19.0/me/feed`;
@@ -100,18 +100,19 @@ async function publishToPlatform(platform, handle, content, mediaUrls, token) {
             }
             const publishResponse = await axios.post(endpoint, null, { params: payload });
             console.log(`[Publishing] Successfully published to Facebook Page! Post ID: ${publishResponse.data.id}\n`);
-            return true;
+            return { success: true };
         }
         else {
             // MOCK FALLBACK for unknown platforms
             await new Promise(resolve => setTimeout(resolve, 1500));
             console.log(`[MOCK API] Successfully published to ${platform}!\n`);
-            return true;
+            return { success: true };
         }
     }
     catch (error) {
+        const errorMsg = error?.response?.data?.error?.message || error?.response?.data?.message || error.message || "Unknown error";
         console.error(`[Publishing Error] Failed to publish to ${platform}:`, error?.response?.data || error.message);
-        return false;
+        return { success: false, errorMsg };
     }
 }
 export function startScheduler(bot) {
@@ -143,6 +144,7 @@ export function startScheduler(bot) {
                 let allPlatformsSucceeded = true;
                 const failedPlatforms = [];
                 const successPlatforms = [];
+                const errorMessages = [];
                 for (const handle of post.platforms) {
                     // Remove "@" and lower case to match handles robustly.
                     const cleanTargetHandle = handle.replace(/^@/, '').toLowerCase();
@@ -153,23 +155,31 @@ export function startScheduler(bot) {
                         console.error(`[Scheduler] Account not found for Target: ${handle} (Cleaned Target: ${cleanTargetHandle})`);
                         allPlatformsSucceeded = false;
                         failedPlatforms.push(handle);
+                        errorMessages.push(`${handle}: Account not connected`);
                         continue;
                     }
                     // Trigger the API call
-                    const success = await publishToPlatform(account.platform, account.handle, post.content, post.mediaUrls, account.token);
-                    if (success) {
+                    const result = await publishToPlatform(account.platform, account.handle, post.content, post.mediaUrls, account.token);
+                    if (result.success) {
                         successPlatforms.push(handle);
                     }
                     else {
                         allPlatformsSucceeded = false;
                         failedPlatforms.push(handle);
+                        if (result.errorMsg) {
+                            errorMessages.push(`${handle}: ${result.errorMsg}`);
+                        }
                     }
                 }
                 // Update the database to reflect the final status
                 const finalStatus = allPlatformsSucceeded ? 'published' : 'failed';
+                const finalErrorMsg = errorMessages.length > 0 ? errorMessages.join(' | ') : null;
                 await prisma.post.update({
                     where: { id: post.id },
-                    data: { status: finalStatus }
+                    data: {
+                        status: finalStatus,
+                        errorMsg: finalErrorMsg
+                    }
                 });
                 console.log(`[Scheduler] Post ${post.id} updated to status: ${finalStatus}`);
                 // Notify the user via Telegram when a bot instance is available.
