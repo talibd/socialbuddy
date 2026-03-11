@@ -33,7 +33,8 @@ model Post {
   mediaUrls   String[] @default([]) // Array of URLs for attached images/videos
   platforms   String[] // Array of handles e.g., ['@my_twitter', '@work_linkedin']
   scheduledAt DateTime?
-  status      String   @default("pending") // 'pending', 'published', 'failed'
-  errorMsg    String?  // The reason for failure (if any)
-  createdAt   DateTime @default(now())
+  status        String   @default("pending") // 'pending', 'published', 'failed'
+  errorMsg      String?  // The reason for failure (if any)
+  publishedData Json?    @default("[]") // [{ platform: string, handle: string, remoteId: string, url: string }]
+  createdAt     DateTime @default(now())
 }

@@ -6,7 +6,7 @@ import { GoogleGenerativeAI, FunctionDeclaration, SchemaType } from '@google/gen
 import dotenv from 'dotenv';
 import axios from 'axios';
 import { uploadBufferToMinio } from './storage.js';
-import { startScheduler } from './scheduler.js';
+import { startScheduler, deleteFromPlatform } from './scheduler.js';
 import { startServer } from './server.js';
 
 dotenv.config();
@@ -86,6 +86,18 @@ const cancelPostDeclaration: FunctionDeclaration = {
     type: SchemaType.OBJECT,
     properties: {
       postId: { type: SchemaType.STRING, description: "The ID of the post to cancel. Get this from get_recent_posts first." }
+    },
+    required: ["postId"],
+  },
+};
+
+const deletePublishedPostDeclaration: FunctionDeclaration = {
+  name: "delete_published_post",
+  description: "Deletes an ALREADY PUBLISHED post from the social media platforms. Use this specifically when a user asks to delete or remove a post that they have already posted.",
+  parameters: {
+    type: SchemaType.OBJECT,
+    properties: {
+      postId: { type: SchemaType.STRING, description: "The ID of the published post to delete. Get this from get_recent_posts first." }
     },
     required: ["postId"],
   },
@@ -302,13 +314,14 @@ bot.on('message', async (ctx) => {
     // Initialize Gemini model with the Tool
     const model = genAI.getGenerativeModel({ 
       model: "gemini-2.5-flash",
-      tools: [{ functionDeclarations: [schedulePostDeclaration, getPostingStatsDeclaration, getRecentPostsDeclaration, getPostAnalyticsDeclaration, cancelPostDeclaration, editPostDeclaration, reschedulePostDeclaration] }],
+      tools: [{ functionDeclarations: [schedulePostDeclaration, getPostingStatsDeclaration, getRecentPostsDeclaration, getPostAnalyticsDeclaration, cancelPostDeclaration, deletePublishedPostDeclaration, editPostDeclaration, reschedulePostDeclaration] }],
       systemInstruction: `You are a social media manager bot. The user currently has these connected accounts: ${accountsList}.
 If the user wants to post something, map their requested '@' mentions to the connected accounts. Use the 'schedule_post' tool when they are ready to post. 
 CRITICAL TIMEZONE INSTRUCTION: The user is in Indian Standard Time (IST, UTC+5:30). Your current server time is ${new Date().toISOString()} (UTC). When the user asks to schedule a post at a specific time (e.g., "1:52 PM"), assume they mean IST. You MUST convert their requested IST time to the correct UTC ISO 8601 timestamp for the 'scheduledAt' parameter.
 If the user asks for reports or stats (like "how many posts"), use the 'get_posting_stats' tool.
 If the user asks about specific posts (like "what is pending?" or "did it post?"), use the 'get_recent_posts' tool to find out, then summarize the results for them naturally. If a post failed, 'get_recent_posts' will return the exact reason in the 'errorMsg' field. ALWAYS use this field to explain to the user exactly why their post failed.
-If the user asks to edit, cancel, or reschedule a post, ALWAYS use 'get_recent_posts' first to find the exact 'id' of the user's pending post, then use the appropriate tool (cancel_post, edit_post_content, or reschedule_post).
+If the user asks to edit, cancel, or reschedule a PENDING post, ALWAYS use 'get_recent_posts' first to find the exact 'id' of the user's pending post, then use the appropriate tool (cancel_post, edit_post_content, or reschedule_post).
+If the user explicitly asks to cancel, removed, or delete an ALREADY PUBLISHED post, use 'get_recent_posts' first to find the 'id', then use the 'delete_published_post' tool.
 If the user asks for likes or analytics, use the 'get_post_analytics' tool.
 If the user attached an image or video, they will pass it as [Attached Media: URL]. Always include this exact URL in the mediaUrls parameter.`
     });
@@ -445,10 +458,52 @@ If the user attached an image or video, they will pass it as [Attached Media: UR
         if (!post) {
             functionResponseData = { error: "Post not found or doesn't belong to you." };
         } else if (post.status !== 'pending') {
-            functionResponseData = { error: "You can only cancel pending posts." };
+            functionResponseData = { error: "You can only cancel pending posts. For already published posts, use the delete_published_post tool." };
         } else {
             await prisma.post.delete({ where: { id: postId } });
-            functionResponseData = { success: true, message: "Post successfully canceled and deleted." };
+            functionResponseData = { success: true, message: "Pending post successfully canceled and deleted." };
+        }
+      } else if (call && call.name === 'delete_published_post') {
+        const { postId } = call.args as any;
+        const post = await prisma.post.findUnique({ where: { id: postId, userId: user.id }, include: { user: { include: { accounts: true } } } });
+        
+        if (!post) {
+            functionResponseData = { error: "Post not found or doesn't belong to you." };
+        } else if (post.status !== 'published') {
+            functionResponseData = { error: "This post has not been published yet. Use cancel_post to cancel it." };
+        } else {
+            const publishedDataList = Array.isArray(post.publishedData) ? post.publishedData : [];
+            if (publishedDataList.length === 0) {
+               functionResponseData = { error: "No recorded platform publishing links were found to delete." };
+            } else {
+               const deletedFrom: string[] = [];
+               const failedToDelete: string[] = [];
+
+               for (const pData of publishedDataList) {
+                  const pDataObj = typeof pData === 'string' ? JSON.parse(pData) : pData;
+                  const account = post.user.accounts.find(acc => acc.platform === pDataObj.platform && acc.handle === pDataObj.handle);
+                  
+                  if (!account) {
+                     failedToDelete.push(`${pDataObj.handle} (Account unlinked)`);
+                     continue;
+                  }
+
+                  const result = await deleteFromPlatform(pDataObj.platform, pDataObj.remoteId, account.token);
+                  if (result.success) {
+                      deletedFrom.push(pDataObj.handle);
+                  } else {
+                      failedToDelete.push(`${pDataObj.handle} (${result.errorMsg})`);
+                  }
+               }
+
+               // Mark it as deleted in DB or just say deleted message
+               functionResponseData = { 
+                   success: deletedFrom.length > 0, 
+                   deletedFrom, 
+                   failedToDelete,
+                   message: deletedFrom.length > 0 ? "Post successfully deleted from platform(s)." : "Failed to delete post from platforms."
+               };
+            }
         }
       } else if (call && call.name === 'edit_post_content') {
         const { postId, newContent } = call.args as any;

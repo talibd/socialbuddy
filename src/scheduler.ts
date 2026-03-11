@@ -11,7 +11,7 @@ const prisma = new PrismaClient({ adapter });
 import axios from 'axios';
 
 // This is a placeholder for the actual API integrations (Twitter/LinkedIn)
-async function publishToPlatform(platform: string, handle: string, content: string, mediaUrls: string[], token: string): Promise<{ success: boolean, errorMsg?: string }> {
+async function publishToPlatform(platform: string, handle: string, content: string, mediaUrls: string[], token: string): Promise<{ success: boolean, errorMsg?: string, remoteId?: string, url?: string }> {
   console.log(`\n[Publishing] Attempting to publish to ${platform} (${handle})...`);
   console.log(`[Publishing] Content: "${content}"`);
   if (mediaUrls && mediaUrls.length > 0) {
@@ -90,7 +90,22 @@ async function publishToPlatform(platform: string, handle: string, content: stri
       });
       
       console.log(`[Publishing] Successfully published to Instagram! IG Media ID: ${publishResponse.data.id}\n`);
-      return { success: true };
+      
+      // Instagram Graph API doesn't easily expose the direct post URL without querying the media node again for its shortcode, 
+      // but we can return the ID. Let's fetch the shortcode to build the URL.
+      let postUrl = '';
+      try {
+         const mediaDetails = await axios.get(`https://graph.facebook.com/v19.0/${publishResponse.data.id}?fields=shortcode`, {
+           params: { access_token: token }
+         });
+         if (mediaDetails.data.shortcode) {
+            postUrl = `https://www.instagram.com/p/${mediaDetails.data.shortcode}/`;
+         }
+      } catch (e) {
+         console.error("[Publishing] Failed to fetch Instagram shortcode for URL generation", e);
+      }
+
+      return { success: true, remoteId: publishResponse.data.id, url: postUrl };
     } else if (platform === 'facebook') {
       let endpoint = `https://graph.facebook.com/v19.0/me/feed`;
       const payload: any = { access_token: token };
@@ -114,17 +129,48 @@ async function publishToPlatform(platform: string, handle: string, content: stri
       }
 
       const publishResponse = await axios.post(endpoint, null, { params: payload });
-      console.log(`[Publishing] Successfully published to Facebook Page! Post ID: ${publishResponse.data.id}\n`);
-      return { success: true };
+      const postId = publishResponse.data.id;
+      // Facebook Graph API returns IDs in format PageID_PostID
+      const parts = postId.split('_');
+      const actualPostId = parts.length > 1 ? parts[1] : postId;
+      const postUrl = `https://www.facebook.com/${actualPostId}`;
+      
+      console.log(`[Publishing] Successfully published to Facebook Page! Post ID: ${postId}\n`);
+      return { success: true, remoteId: postId, url: postUrl };
     } else {
       // MOCK FALLBACK for unknown platforms
       await new Promise(resolve => setTimeout(resolve, 1500));
+      const mockId = `mock-${Date.now()}`;
       console.log(`[MOCK API] Successfully published to ${platform}!\n`);
-      return { success: true }; 
+      return { success: true, remoteId: mockId, url: `https://${platform}.com/post/${mockId}` }; 
     }
   } catch (error: any) {
      const errorMsg = error?.response?.data?.error?.message || error?.response?.data?.message || error.message || "Unknown error";
      console.error(`[Publishing Error] Failed to publish to ${platform}:`, error?.response?.data || error.message);
+     return { success: false, errorMsg };
+  }
+}
+
+export async function deleteFromPlatform(platform: string, remoteId: string, token: string): Promise<{ success: boolean, errorMsg?: string }> {
+  console.log(`\n[Publishing] Attempting to delete from ${platform} (ID: ${remoteId})...`);
+  
+  try {
+     if (platform === 'facebook' || platform === 'instagram') {
+        // Facebook Graph API generic delete endpoint works for both FB posts and IG Media
+        await axios.delete(`https://graph.facebook.com/v19.0/${remoteId}`, {
+           params: { access_token: token }
+        });
+        console.log(`[Publishing] Successfully deleted from ${platform}! ID: ${remoteId}\n`);
+        return { success: true };
+     } else {
+        // Mock fallback for others
+        await new Promise(resolve => setTimeout(resolve, 800));
+        console.log(`[MOCK API] Successfully deleted from ${platform}!\n`);
+        return { success: true };
+     }
+  } catch (error: any) {
+     const errorMsg = error?.response?.data?.error?.message || error?.response?.data?.message || error.message || "Unknown error";
+     console.error(`[Publishing Error] Failed to delete from ${platform}:`, error?.response?.data || error.message);
      return { success: false, errorMsg };
   }
 }
@@ -163,6 +209,7 @@ export function startScheduler(bot?: Telegraf) {
         const failedPlatforms: string[] = [];
         const successPlatforms: string[] = [];
         const errorMessages: string[] = [];
+        const publishedData: { platform: string, handle: string, remoteId: string, url: string }[] = [];
 
         for (const handle of post.platforms) {
           // Remove "@" and lower case to match handles robustly.
@@ -193,6 +240,14 @@ export function startScheduler(bot?: Telegraf) {
           
           if (result.success) {
             successPlatforms.push(handle);
+            if (result.remoteId) {
+               publishedData.push({
+                   platform: account.platform,
+                   handle: handle,
+                   remoteId: result.remoteId,
+                   url: result.url || ''
+               });
+            }
           } else {
             allPlatformsSucceeded = false;
             failedPlatforms.push(handle);
@@ -210,7 +265,8 @@ export function startScheduler(bot?: Telegraf) {
           where: { id: post.id },
           data: { 
             status: finalStatus,
-            errorMsg: finalErrorMsg
+            errorMsg: finalErrorMsg,
+            publishedData: publishedData
           }
         });
         
@@ -221,7 +277,13 @@ export function startScheduler(bot?: Telegraf) {
           try {
             let notifyMsg = `🔔 Post Update\n\n`;
             if (finalStatus === 'published') {
-              notifyMsg += `✅ Your scheduled post has been published successfully to: ${successPlatforms.join(', ')}\n\n`;
+              notifyMsg += `✅ Your scheduled post has been published successfully!\n\n`;
+              for (const pData of publishedData) {
+                  notifyMsg += `🟢 ${pData.handle}: `;
+                  notifyMsg += pData.url ? pData.url : 'Published';
+                  notifyMsg += `\n`;
+              }
+              notifyMsg += `\n`;
             } else {
               notifyMsg += `⚠️ There was an issue publishing your scheduled post.\n\n`;
               if (successPlatforms.length > 0) notifyMsg += `✅ Succeeded: ${successPlatforms.join(', ')}\n`;
