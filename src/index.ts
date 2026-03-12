@@ -481,8 +481,8 @@ If the user attached an image or video, they will pass it as [Attached Media: UR
 
                for (const pData of publishedDataList) {
                   const pDataObj = typeof pData === 'string' ? JSON.parse(pData) : pData;
-                  const account = post.user.accounts.find(acc => acc.platform === pDataObj.platform && acc.handle === pDataObj.handle);
-                  
+                  const cleanTargetHandle = pDataObj.handle.replace(/^@/, '').toLowerCase();
+                  const account = post.user.accounts.find(acc => acc.platform === pDataObj.platform && acc.handle.replace(/^@/, '').toLowerCase() === cleanTargetHandle);                  
                   if (!account) {
                      failedToDelete.push(`${pDataObj.handle} (Account unlinked)`);
                      continue;
